@@ -14,12 +14,13 @@
 - 重要改動附對應安全回歸測試。
 
 ## 未完成／殘餘風險
-1. 根目錄與 admin 的 Vite 8.1.5 鎖定依賴**仍需更新**：確實受 GHSA-p4f5-76q4-ffq7 影響（於網路暴露開發伺服器的條件下），需用 npm 工具更新 lockfile、跑 CI。
+1. 根目錄與 admin 的 Vite 已在安全分支提升至 8.3.8，Hono 4.13.18，並重新產生 lockfile；須以最新 CI 成果再次驗證。
 2. `drizzle-kit` 的間接 `esbuild@0.18.20`／棄用依賴需在上游或替代方案解決。
 3. Queue→Meta API 無法保證端對端 exactly-once；Meta 已發出但本地狀態寫入失敗時仍存在重送可能，後續需鎖／lease／reconciliation。
 4. 目前只有 pending 補送，DLQ、通知／告警、人工恢復 UI 尚未實作。
-5. 個資刪除機制、全套儲存期限、請求及輸入全域長度限制、安全標頭、完整 CodeQL 與部署沙箱測試仍待完成。
-6. 尚未取得正式 CI pass 證據、npm audit 結果，也未做 Workers 真實環境回歸測試。
+5. 已新增超過 90 天的 Automation Run 個資遮蔽及超過 180 天的稽核 IP 遮蔽；仍缺完整指定個人資料刪除、自動化事件識別碼保存期限、全面輸入長度限制、安全標頭與部署沙箱測試。
+6. 加入 CodeQL 靜態分析與官方 Actions SHA pin，需確認 GitHub Code Scanning 權限及 CI 結果。
+7. 2026-11-14 GitHub Actions 在舊鎖定檔下完整 234 項測試及建置已通過；重新鎖定依賴後 CI 持續驗證。npm audit 新鎖定檔：root 11 moderate / 0 high，admin 0，production 0。尚未做 Workers 真實環境測試。
 
 ## 安全公告
 - https://github.com/vitejs/vite/security/advisories/GHSA-p4f5-76q4-ffq7
