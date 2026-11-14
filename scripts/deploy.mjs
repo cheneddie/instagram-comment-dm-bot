@@ -24,6 +24,7 @@ if (targetEnv !== null && targetEnv !== 'staging') {
 }
 const envArgs = targetEnv ? ['--env', targetEnv] : [];
 const QUEUE_NAME = targetEnv ? 'ig-comment-events-staging' : 'ig-comment-events';
+const DLQ_NAME = targetEnv ? 'ig-comment-events-staging-dlq' : 'ig-comment-events-dlq';
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 
@@ -37,6 +38,14 @@ try {
   console.log(`已建立 Queue：${QUEUE_NAME}`);
 } catch {
   console.log(`Queue ${QUEUE_NAME} 可能已存在，部署階段會再次驗證。`);
+}
+
+// 失敗訊息的 Dead Letter Queue：隔離重試用盡的事件，供管理者稽核與手動重送。
+try {
+  execFileSync(npx, ['wrangler', 'queues', 'create', DLQ_NAME], { stdio: 'pipe', shell: false });
+  console.log(`已建立 Dead Letter Queue：${DLQ_NAME}`);
+} catch {
+  console.log(`Dead Letter Queue ${DLQ_NAME} 可能已存在，部署階段會再次驗證。`);
 }
 
 // wrangler 的自動開通只會把 database_id 寫回「頂層」設定，env 區塊不會（實測）。

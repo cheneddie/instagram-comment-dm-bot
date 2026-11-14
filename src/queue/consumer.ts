@@ -3,6 +3,7 @@ import type { MessageBatch } from '@cloudflare/workers-types';
 import type { AppBindings } from '../app';
 import { processCommentEvent, processStoryReplyEvent, type EngineDeps } from '../automation/engine';
 import { MetaClient } from '../meta/client';
+import { createLogger } from '../monitoring/logger';
 import type { CommentEventMessage } from './producer';
 
 export async function consumeCommentEvents(
@@ -18,6 +19,7 @@ export async function consumeCommentEvents(
     }),
   };
 
+  const logger = createLogger(env.LOG_LEVEL as never);
   for (const msg of batch.messages) {
     try {
       const outcome =
@@ -30,7 +32,8 @@ export async function consumeCommentEvents(
         msg.ack();
       }
     } catch {
-      // 未預期錯誤：交回 Queue 重試（Cloudflare 的 max_retries 上限保護）。
+      // 不寫出事件 body / Token；重試用盡後由 Dead Letter Queue 留存待人工稽核。
+      logger.error({ action: 'queue.consume_failed', webhookEventId: msg.body.webhookEventId });
       msg.retry();
     }
   }

@@ -159,3 +159,7 @@ npm run lint && npm run typecheck
 - Webhook 請求本文最多 1 MiB，Queue 發送失敗的事件會保留待重送，Cron 每 5 分鐘補送；極端情況仍可能因外部 API 的「成功但回應遺失」而重送，不能宣稱 exactly-once。
 - 部署指令的 `--env` 僅接受 `staging`，避免將不可信字串拼入 Shell。
 - 參見 `docs/SECURITY_HARDENING_REPORT.md`，部署前仍需 npm audit、CI、正式環境驗證；未驗證前不要接正式 IG 帳號。
+
+### Queue 失敗隔離
+
+部署腳本會建立 `ig-comment-events-dlq`（staging 為 `ig-comment-events-staging-dlq`）。Queue Consumer 超過 3 次失敗會送到 DLQ，請於 Cloudflare 儀表板監控／手動檢查，**不要直接大量重播未核對發送狀態的事件**，避免重複公開回覆／DM。
