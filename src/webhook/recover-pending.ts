@@ -20,6 +20,11 @@ export async function recoverPendingWebhooks(env: AppBindings, nowMs = Date.now(
       .where(and(eq(webhookEvents.id, ev.id), eq(webhookEvents.status, ev.status)))
       .returning({ id: webhookEvents.id });
     if (!claimed[0]) continue;
+    if (!ev.instagramAccountId || !ev.instagramMediaId || !ev.instagramCommentId) {
+      // 不完整事件無法安全重送，標記為 invalid 供人工稽核，避免無限反覆觸發。
+      await db.update(webhookEvents).set({ status: 'invalid' }).where(eq(webhookEvents.id, ev.id));
+      continue;
+    }
     try {
       await enqueueCommentEvent(env.COMMENT_QUEUE, {
         webhookEventId: ev.id,
