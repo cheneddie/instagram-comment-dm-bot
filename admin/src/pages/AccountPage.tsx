@@ -32,10 +32,8 @@ export function AccountPage() {
     setBusy(true);
     try {
       await apiPost('/api/admin/auth/change-password', { currentPassword, newPassword });
-      setNotice('密碼已更新 ✓');
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirm('');
+      setNotice('密碼已更新，所有舊登入工作階段已撤銷，請重新登入。');
+      navigate('/login', { replace: true });
     } catch (err) {
       const apiErr = err as ApiError;
       if (apiErr.status === 401) navigate('/login');

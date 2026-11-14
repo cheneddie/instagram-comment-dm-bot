@@ -17,6 +17,7 @@ export type AppBindings = {
   WEBHOOK_VERIFY_TOKEN: string;
   INSTAGRAM_ACCOUNT_ACCESS_TOKEN: string;
   ADMIN_SESSION_SECRET: string;
+  ADMIN_SETUP_TOKEN: string;
   META_GRAPH_API_VERSION: string;
   META_BASE_URL?: string;
   APP_ENV: string;

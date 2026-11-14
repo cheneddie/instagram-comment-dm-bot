@@ -16,8 +16,10 @@ vi.mock('../../src/security/password', async (importOriginal) => {
 
 const alwaysAllowLimiter = { limit: async () => ({ success: true }) };
 
+const SETUP_TOKEN = 'integration-test-setup-token-0123456789-abcdef';
 const BASE_ENV = {
   ADMIN_SESSION_SECRET: 'integration-test-secret',
+  ADMIN_SETUP_TOKEN: SETUP_TOKEN,
   ADMIN_RATE_LIMITER: alwaysAllowLimiter,
 } as const;
 
@@ -174,7 +176,7 @@ function setupRequest(body: object) {
   return new Request('https://igbot.example.com/api/admin/auth/setup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: 'https://igbot.example.com' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ setupToken: SETUP_TOKEN, ...body }),
   });
 }
 
@@ -193,6 +195,22 @@ describe('first-run setup（GET setup-status / POST setup）', () => {
       env,
     );
     expect(await after.json()).toEqual({ needsSetup: false });
+  });
+
+  it('refuses setup without the deployment secret (fail-closed)', async () => {
+    const app = createApp();
+    const missingSecretEnv = { ...env, ADMIN_SETUP_TOKEN: undefined };
+    const response = await app.fetch(setupRequest({ email: 'first@example.com', password: 'long-enough-password' }), missingSecretEnv);
+    expect(response.status).toBe(503);
+    expect(await drizzle(sqlite, { schema }).select().from(adminUsers)).toHaveLength(0);
+  });
+
+  it('refuses an incorrect or missing setup token', async () => {
+    const app = createApp();
+    const base = { email: 'first@example.com', password: 'long-enough-password' };
+    expect((await app.fetch(setupRequest({ ...base, setupToken: 'wrong' }), env)).status).toBe(403);
+    expect((await app.fetch(setupRequest({ ...base, setupToken: '' }), env)).status).toBe(403);
+    expect(await drizzle(sqlite, { schema }).select().from(adminUsers)).toHaveLength(0);
   });
 
   it('creates the first admin, sets a session cookie, and allows subsequent login', async () => {
@@ -353,6 +371,12 @@ describe('POST /api/admin/auth/change-password', () => {
       env,
     );
     expect(res.status).toBe(200);
+    expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0');
+    const oldSession = await app.fetch(
+      new Request('https://igbot.example.com/api/admin/auth/me', { headers: { Cookie: cookie } }),
+      env,
+    );
+    expect(oldSession.status).toBe(401);
 
     const oldLogin = await app.fetch(
       loginRequest({ email: 'admin@example.com', password: 'correct-password-123' }),

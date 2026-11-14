@@ -74,6 +74,7 @@ npx wrangler secret put INSTAGRAM_APP_SECRET
 npx wrangler secret put WEBHOOK_VERIFY_TOKEN        # 自訂隨機字串；步驟 2 會再用到
 npx wrangler secret put INSTAGRAM_ACCOUNT_ACCESS_TOKEN
 npx wrangler secret put ADMIN_SESSION_SECRET     # 32 bytes 以上隨機值
+npx wrangler secret put ADMIN_SETUP_TOKEN       # 32 字元以上隨機初始化碼，首次設定管理員時必填
 
 # 部署——首次執行會自動建立 D1 資料庫與 Queue、建置管理後台、
 # 部署 Worker 並套用 migrations。不需要命名任何資源、不需要改任何設定檔。
@@ -100,9 +101,9 @@ npm run deploy
 
 ### 3. 建立管理者帳號
 
-**首次部署完成後立刻**打開 `https://<你的網域>/admin`。在還沒有任何管理者帳號時，登入頁會顯示一次性的**首次啟動設定表單**：輸入 Email 與密碼（至少 12 字元）即建立唯一的管理者帳號並自動登入。帳號建立後這個表單就永久消失——全程不需要 terminal。
+**首次部署完成後立刻**打開 `https://<你的網域>/admin`。在還沒有任何管理者帳號時，登入頁會顯示一次性的**首次啟動設定表單**：輸入初始化憑證（`ADMIN_SETUP_TOKEN`）、Email 與密碼（至少 12 字元）即建立唯一的管理者帳號並自動登入。帳號建立後這個表單就永久消失——全程不需要 terminal。
 
-> 請盡快完成這步：在帳號建立之前，任何發現你剛部署網址的人都有可能搶先註冊。
+> 安全性：沒有正確的 `ADMIN_SETUP_TOKEN` 無法初始化。請使用高熵隨機值，不可重用任何密碼；完成後可用 `npx wrangler secret delete ADMIN_SETUP_TOKEN` 撤除初始化 Secret。
 
 CLI 備援（例如不想用網頁表單時）：
 

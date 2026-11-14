@@ -16,3 +16,7 @@ INSTAGRAM_ACCOUNT_ACCESS_TOKEN=
 
 # 管理者 Session 簽章用的隨機字串（建議 32 bytes 以上的隨機值）。
 ADMIN_SESSION_SECRET=
+
+# 首次管理員設定時輸入的高熵一次性初始化碼（至少 32 字元）。
+# 完成初始化後，可刪除此 Secret；未設定時 Web 初始化會拒絕執行。
+ADMIN_SETUP_TOKEN=

@@ -12,6 +12,7 @@ export interface SessionPayload {
   kid: string; // secret 版本，MVP 固定 KID_CURRENT
   iat: number; // 簽發時間（Unix 秒）
   exp: number; // 過期時間（Unix 秒）
+  rev?: string; // 綁定登入當下密碼雜湊版本，用於密碼變更撤銷既有 Session
 }
 
 export const KID_CURRENT = '1';
@@ -44,10 +45,17 @@ async function importKey(secret: string): Promise<CryptoKey> {
   );
 }
 
+export async function credentialRevision(secret: string, passwordHash: string): Promise<string> {
+  const key = await importKey(secret);
+  const revision = await crypto.subtle.sign('HMAC', key, encoder.encode(`session-revision:${passwordHash}`));
+  return base64urlEncode(new Uint8Array(revision));
+}
+
 export async function createSessionCookie(
   secret: string,
   adminUserId: string,
   ttlSeconds: number,
+  passwordHash?: string,
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload: SessionPayload = {
@@ -55,6 +63,7 @@ export async function createSessionCookie(
     kid: KID_CURRENT,
     iat: now,
     exp: now + ttlSeconds,
+    rev: passwordHash ? await credentialRevision(secret, passwordHash) : undefined,
   };
   const payloadB64 = base64urlEncode(encoder.encode(JSON.stringify(payload)));
   const key = await importKey(secret);
