@@ -11,6 +11,14 @@ import { automationRuns, sendCounters, systemSettings } from '../database/schema
 
 type SchemaDb = BaseSQLiteDatabase<'sync' | 'async', unknown, typeof schema>;
 
+// 安全預設：即使 system_settings 尚未建立、欄位為 NULL，也不能無上限發送。
+export const DEFAULT_SEND_LIMITS = {
+  publicPerMinute: 20,
+  privatePerMinute: 10,
+  publicPerDay: 300,
+  privatePerDay: 100,
+} as const;
+
 export type SendActionType = 'public_reply' | 'private_reply';
 
 export type SendGateDenialReason =
@@ -93,12 +101,12 @@ export async function acquireSendPermission(
   // 3. 系統層分鐘/每日上限（依動作類型取對應設定）。
   const minuteCap =
     input.actionType === 'public_reply'
-      ? (settings?.maxPublicRepliesPerMinute ?? null)
-      : (settings?.maxPrivateRepliesPerMinute ?? null);
+      ? (settings?.maxPublicRepliesPerMinute ?? DEFAULT_SEND_LIMITS.publicPerMinute)
+      : (settings?.maxPrivateRepliesPerMinute ?? DEFAULT_SEND_LIMITS.privatePerMinute);
   const dayCap =
     input.actionType === 'public_reply'
-      ? (settings?.maxPublicRepliesPerDay ?? null)
-      : (settings?.maxPrivateRepliesPerDay ?? null);
+      ? (settings?.maxPublicRepliesPerDay ?? DEFAULT_SEND_LIMITS.publicPerDay)
+      : (settings?.maxPrivateRepliesPerDay ?? DEFAULT_SEND_LIMITS.privatePerDay);
 
   if (minuteCap != null) {
     const count = await reserveCounter(db, `${input.actionType}:minute`, minuteWindowStart(nowMs));

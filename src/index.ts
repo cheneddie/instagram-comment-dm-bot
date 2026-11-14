@@ -3,6 +3,7 @@ import { createDb } from './database/client';
 import { runDataCleanup, scheduledJobForCron } from './maintenance/cleanup';
 import { runScheduledSync } from './meta/media';
 import { consumeCommentEvents } from './queue/consumer';
+import { recoverPendingWebhooks } from './webhook/recover-pending';
 import type { CommentEventMessage } from './queue/producer';
 
 const app = createApp();
@@ -19,7 +20,9 @@ export default {
   // 資料清理（03:00 台北 = 19:00 UTC，spec §20）。
   async scheduled(controller: ScheduledController, env: AppBindings, _ctx: ExecutionContext): Promise<void> {
     try {
-      if (scheduledJobForCron(controller.cron) === 'cleanup') {
+      if (controller.cron === '*/5 * * * *') {
+        await recoverPendingWebhooks(env);
+      } else if (scheduledJobForCron(controller.cron) === 'cleanup') {
         await runDataCleanup(createDb(env.DB));
       } else {
         await runScheduledSync(env);
