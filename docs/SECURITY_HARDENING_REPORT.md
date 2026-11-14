@@ -20,10 +20,16 @@
 4. 已設定 Cloudflare Dead Letter Queue 並加入安全的 Consumer 失敗日誌；仍未實作即時告警、DLQ 管理 UI、對已送出 Meta 訊息的人工核對流程。
 5. 已新增超過 90 天的 Automation Run 個資遮蔽及超過 180 天的稽核 IP 遮蔽；仍缺完整指定個人資料刪除、自動化事件識別碼保存期限、全面輸入長度限制、安全標頭與部署沙箱測試。
 6. 加入 CodeQL 靜態分析與官方 Actions SHA pin，需確認 GitHub Code Scanning 權限及 CI 結果。
-7. 2026-11-14 GitHub Actions 在舊鎖定檔下完整 234 項測試及建置已通過；重新鎖定依賴後 CI 持續驗證。npm audit 新鎖定檔：root 11 moderate / 0 high，admin 0，production 0。尚未做 Workers 真實環境測試。
+7. 2026-11-14 GitHub Actions 在程式 HEAD fb2e729 上 CI 通過（33 個 test files、240/240 tests、lint、typecheck、build）；Security checks 通過：root 11 moderate / 0 high，admin 0，production 0。CodeQL static analysis workflow 成功完成；仍須在 GitHub Security 頁面查看實際 alerts。尚未做 Workers 真實環境及 Meta DM 測試。
 
 ## 安全公告
 - https://github.com/vitejs/vite/security/advisories/GHSA-p4f5-76q4-ffq7
 - https://github.com/advisories/GHSA-67mh-4wv8-2f99
 
 這是階段性工程修補，不代表所有資安漏洞已清零，也不代表已可正式上線。
+
+## 2026-11-14 實際驗證證據
+- CI 成功：[run 43608474781](https://github.com/cheneddie/instagram-comment-dm-bot/actions/runs/43608474781)（240/240 測試通過，Lint、Typecheck、Build 成功）。
+- Security checks 成功：[run 43608474764](https://github.com/cheneddie/instagram-comment-dm-bot/actions/runs/43608474764)（root 11 moderate/0 high；admin 0；production 0）。
+- CodeQL 工作流程成功：[run 43608474800](https://github.com/cheneddie/instagram-comment-dm-bot/actions/runs/43608474800)（成功執行不等於沒有 alerts）。
+- 部署 Staging / 真實 Meta 行為：NOT TESTED。
