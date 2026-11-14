@@ -1,0 +1,45 @@
+# One-time security branch maintenance. Remove this workflow after it completes.
+# Installs no lifecycle scripts; pushes only lockfiles/package manifests to the named branch.
+name: One-time lockfile refresh
+
+on:
+  push:
+    branches: ['security/hardening-2026-11-14']
+    paths: ['.github/workflows/one-time-lockfile-refresh.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile-refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security/hardening-2026-11-14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Refresh root dependency lockfile without lifecycle scripts
+        run: |
+          npm update --package-lock-only --ignore-scripts
+          npm audit fix --package-lock-only --ignore-scripts || true
+      - name: Patch admin Vite and update admin lockfile without lifecycle scripts
+        working-directory: admin
+        run: |
+          npm install --save-dev 'vite@^8.1.7' --package-lock-only --ignore-scripts
+          npm audit fix --package-lock-only --ignore-scripts || true
+      - name: Confirm lockfiles and version
+        run: |
+          node -e "const a=require('./admin/package-lock.json'); const p=a.packages['node_modules/vite']; if(!p||/^(8\\.0\\.|8\\.1\\.[0-6]$)/.test(p.version)) process.exit(1); console.log('admin vite',p.version)"
+          git diff --stat -- package.json package-lock.json admin/package.json admin/package-lock.json
+      - name: Commit refreshed dependency locks to security branch only
+        run: |
+          git config user.name "security-lockfile-bot"
+          git config user.email "security-lockfile-bot@users.noreply.github.com"
+          git add package.json package-lock.json admin/package.json admin/package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(security): refresh npm lockfiles and patch Vite"
+            git push origin HEAD:security/hardening-2026-11-14
+          fi
