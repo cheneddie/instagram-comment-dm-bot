@@ -17,14 +17,15 @@ beforeEach(async () => {
   sqlite = new Database(':memory:');
   applyMigrations(sqlite, join(__dirname, '../../drizzle/migrations'));
   const db = drizzle(sqlite, { schema });
-  await db.insert(schema.adminUsers).values({ id: 'admin-1', email: 'a@b.com', passwordHash: await hashPassword('x') });
+  const adminHash = await hashPassword('x');
+  await db.insert(schema.adminUsers).values({ id: 'admin-1', email: 'a@b.com', passwordHash: adminHash });
   await db.insert(schema.instagramAccounts).values({ id: 'acct', instagramAccountId: 'ig-acct', circuitBreakerStatus: 'closed' });
   env = {
     DB: createD1Shim(sqlite),
     ADMIN_SESSION_SECRET: SECRET,
     ADMIN_RATE_LIMITER: { limit: async () => ({ success: true }) },
   };
-  cookie = `${SESSION_COOKIE_NAME}=${await createSessionCookie(SECRET, 'admin-1', 3600)}`;
+  cookie = `${SESSION_COOKIE_NAME}=${await createSessionCookie(SECRET, 'admin-1', 3600, adminHash)}`;
 });
 
 function post(path: string) {
