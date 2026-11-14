@@ -58,7 +58,7 @@ Cron：每日貼文同步 · Token 到期檢查
 
 - **Cloudflare 帳號**（免費方案即可——Queues 免費版每日 10,000 次佇列操作、訊息保留 24 小時，個人帳號用量綽綽有餘；重度用量再升級 Workers Paid），並已完成 `npx wrangler login`。
 - **Meta 開發者 App**（已加入 Instagram 產品）與一個你管理的 **Instagram 專業帳號**。
-- **Node.js 20+**。
+- **Node.js 24 LTS**（建置／CI 使用）。
 
 ## Quick Start
 
@@ -149,3 +149,13 @@ npm run lint && npm run typecheck
 ## License
 
 [MIT](LICENSE)
+
+
+## 安全性強化（Fork 維護）
+
+- Web 初始管理員設定需要 Cloudflare Secret `ADMIN_SETUP_TOKEN`（至少 32 字元高熵隨機值），完成後可移除。
+- 改密碼會撤銷所有舊 Session Cookie，使用者需重新登入。
+- 即使 D1 系統設定未建立，公開回覆預設每分鐘 20 則／每日 300 則，DM 每分鐘 10 則／每日 100 則（可透過資料庫系統設定調整）。
+- Webhook 請求本文最多 1 MiB，Queue 發送失敗的事件會保留待重送，Cron 每 5 分鐘補送；極端情況仍可能因外部 API 的「成功但回應遺失」而重送，不能宣稱 exactly-once。
+- 部署指令的 `--env` 僅接受 `staging`，避免將不可信字串拼入 Shell。
+- 參見 `docs/SECURITY_HARDENING_REPORT.md`，部署前仍需 npm audit、CI、正式環境驗證；未驗證前不要接正式 IG 帳號。

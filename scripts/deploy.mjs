@@ -6,28 +6,37 @@
 //    資料庫並把 ID 寫回 wrangler.jsonc，之後的部署保持連結。
 // 4. 套用 D1 migrations（放在 deploy 之後，確保資料庫已存在；首次部署會有數秒
 //    「已上線但尚無資料表」的空窗，屬可接受範圍）。
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
 // 支援部署到指定環境：npm run deploy -- --env staging
 // （staging 使用獨立的 Worker/D1/Queue/secrets，與正式環境零共用。）
 const envIdx = process.argv.indexOf('--env');
-const targetEnv = envIdx !== -1 ? process.argv[envIdx + 1] : null;
-const envFlag = targetEnv ? ` --env ${targetEnv}` : '';
-const QUEUE_NAME = targetEnv ? `ig-comment-events-${targetEnv}` : 'ig-comment-events';
+if (envIdx !== -1 && (envIdx !== process.argv.length - 2 || process.argv.length !== 4)) {
+  throw new Error('請使用 --env staging；不接受其他參數');
+}
+if (envIdx === -1 && process.argv.length !== 2) {
+  throw new Error('不接受未知部署參數');
+}
+const targetEnv = envIdx === -1 ? null : process.argv[envIdx + 1];
+if (targetEnv !== null && targetEnv !== 'staging') {
+  throw new Error('目前只支援 staging；請勿使用任意 --env 名稱');
+}
+const envArgs = targetEnv ? ['--env', targetEnv] : [];
+const QUEUE_NAME = targetEnv ? 'ig-comment-events-staging' : 'ig-comment-events';
+const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 
-function run(cmd) {
-  console.log(`\n$ ${cmd}`);
-  execSync(cmd, { stdio: 'inherit' });
+function run(executable, args) {
+  console.log('\n$ ' + [executable, ...args].join(' '));
+  execFileSync(executable, args, { stdio: 'inherit', shell: false });
 }
 
 try {
-  execSync(`npx wrangler queues create ${QUEUE_NAME}`, { stdio: 'pipe' });
+  execFileSync(npx, ['wrangler', 'queues', 'create', QUEUE_NAME], { stdio: 'pipe', shell: false });
   console.log(`已建立 Queue：${QUEUE_NAME}`);
 } catch {
-  // 幾乎都是「Queue 已存在」（正常情況）。若是未登入等其他問題，
-  // 後面的 wrangler deploy 會失敗並顯示明確的錯誤訊息。
-  console.log(`Queue ${QUEUE_NAME} 已存在，略過建立。`);
+  console.log(`Queue ${QUEUE_NAME} 可能已存在，部署階段會再次驗證。`);
 }
 
 // wrangler 的自動開通只會把 database_id 寫回「頂層」設定，env 區塊不會（實測）。
@@ -38,7 +47,7 @@ function ensureDatabaseId(dbName) {
   const nameIdx = cfg.indexOf(`"database_name": "${dbName}"`);
   if (nameIdx === -1) return;
   if (cfg.slice(nameIdx, nameIdx + 200).includes('"database_id"')) return; // 已有 id
-  const listJson = execSync('npx wrangler d1 list --json', { stdio: 'pipe' }).toString();
+  const listJson = execFileSync(npx, ['wrangler', 'd1', 'list', '--json'], { stdio: 'pipe', shell: false }).toString();
   const found = JSON.parse(listJson).find((d) => d.name === dbName);
   if (!found) return;
   const lineStart = cfg.lastIndexOf('\n', nameIdx) + 1;
@@ -50,10 +59,10 @@ function ensureDatabaseId(dbName) {
   console.log(`已把 ${dbName} 的 database_id 寫回 wrangler.jsonc`);
 }
 
-run('npm ci --prefix admin'); // 確保 admin 依賴存在（Workers Builds 等環境只裝根目錄依賴）
-run('npm run build --prefix admin');
-run(`npx wrangler deploy${envFlag}`);
+run(npm, ['ci', '--prefix', 'admin']); // 確保 admin 依賴存在（Workers Builds 等環境只裝根目錄依賴）
+run(npm, ['run', 'build', '--prefix', 'admin']);
+run(npx, ['wrangler', 'deploy', ...envArgs]);
 ensureDatabaseId(DB_NAME);
-run(`npx wrangler d1 migrations apply DB --remote${envFlag}`);
+run(npx, ['wrangler', 'd1', 'migrations', 'apply', 'DB', '--remote', ...envArgs]);
 
 console.log('\n部署完成。首次部署請立刻打開 https://<你的 Worker 網址>/admin 建立管理者帳號。');
