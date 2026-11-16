@@ -1,30 +1,14 @@
 #!/usr/bin/env node
-// 一鍵部署（npm run deploy）——使用者不需要手動建立或命名任何 Cloudflare 資源：
-// 1. Queue 不存在就自動建立（wrangler 的自動開通目前不涵蓋 Queues，故在此補上）。
-// 2. 建置管理後台（ASSETS binding 需要 admin/dist）。
-// 3. wrangler deploy——設定檔的 D1 缺 database_id 時，wrangler（≥4.45）會自動建立
-//    資料庫並把 ID 寫回 wrangler.jsonc，之後的部署保持連結。
-// 4. 套用 D1 migrations（放在 deploy 之後，確保資料庫已存在；首次部署會有數秒
-//    「已上線但尚無資料表」的空窗，屬可接受範圍）。
+// 正式環境唯一部署入口：npm run deploy。
+// 不支援 --env staging，避免誤寫第二套 Worker/D1/Queue。
+// 只做非破壞性部署與 migrations；不刪資料表、事件、Secrets。
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
-// 支援部署到指定環境：npm run deploy -- --env staging
-// （staging 使用獨立的 Worker/D1/Queue/secrets，與正式環境零共用。）
-const envIdx = process.argv.indexOf('--env');
-if (envIdx !== -1 && (envIdx !== process.argv.length - 2 || process.argv.length !== 4)) {
-  throw new Error('請使用 --env staging；不接受其他參數');
+if (process.argv.length !== 2) {
+  throw new Error('只支援正式環境：請使用 npm run deploy，不接受 --env 或其他參數。');
 }
-if (envIdx === -1 && process.argv.length !== 2) {
-  throw new Error('不接受未知部署參數');
-}
-const targetEnv = envIdx === -1 ? null : process.argv[envIdx + 1];
-if (targetEnv !== null && targetEnv !== 'staging') {
-  throw new Error('目前只支援 staging；請勿使用任意 --env 名稱');
-}
-const envArgs = targetEnv ? ['--env', targetEnv] : [];
-const QUEUE_NAME = targetEnv ? 'ig-comment-events-staging' : 'ig-comment-events';
-const DLQ_NAME = targetEnv ? 'ig-comment-events-staging-dlq' : 'ig-comment-events-dlq';
+
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 
@@ -33,45 +17,53 @@ function run(executable, args) {
   execFileSync(executable, args, { stdio: 'inherit', shell: false });
 }
 
-try {
-  execFileSync(npx, ['wrangler', 'queues', 'create', QUEUE_NAME], { stdio: 'pipe', shell: false });
-  console.log(`已建立 Queue：${QUEUE_NAME}`);
-} catch {
-  console.log(`Queue ${QUEUE_NAME} 可能已存在，部署階段會再次驗證。`);
-}
-
-// 失敗訊息的 Dead Letter Queue：隔離重試用盡的事件，供管理者稽核與手動重送。
-try {
-  execFileSync(npx, ['wrangler', 'queues', 'create', DLQ_NAME], { stdio: 'pipe', shell: false });
-  console.log(`已建立 Dead Letter Queue：${DLQ_NAME}`);
-} catch {
-  console.log(`Dead Letter Queue ${DLQ_NAME} 可能已存在，部署階段會再次驗證。`);
-}
-
-// wrangler 的自動開通只會把 database_id 寫回「頂層」設定，env 區塊不會（實測）。
-// 部署後若設定檔仍缺 id，從 `wrangler d1 list` 反查並寫回，migrations 才能解析 binding。
-const DB_NAME = targetEnv ? `ig-comment-dm-db-${targetEnv}` : 'ig-comment-dm-db';
-function ensureDatabaseId(dbName) {
-  const cfg = readFileSync('wrangler.jsonc', 'utf8');
-  const nameIdx = cfg.indexOf(`"database_name": "${dbName}"`);
-  if (nameIdx === -1) return;
-  if (cfg.slice(nameIdx, nameIdx + 200).includes('"database_id"')) return; // 已有 id
-  const listJson = execFileSync(npx, ['wrangler', 'd1', 'list', '--json'], { stdio: 'pipe', shell: false }).toString();
-  const found = JSON.parse(listJson).find((d) => d.name === dbName);
-  if (!found) return;
+// 提交到 GitHub 的 wrangler.jsonc 不包含個人 D1 UUID。
+// 重新拉取程式碼後，優先連回已存在的正式 DB，避免意外建立第二個資料庫。
+function bindExistingProductionDb() {
+  const configPath = 'wrangler.jsonc';
+  const cfg = readFileSync(configPath, 'utf8');
+  const nameLine = '"database_name": "ig-comment-dm-db"';
+  const nameIdx = cfg.indexOf(nameLine);
+  if (nameIdx === -1) throw new Error('缺少正式 D1 設定 ig-comment-dm-db');
+  const ids = JSON.parse(execFileSync(npx, ['wrangler', 'd1', 'list', '--json'], {
+    stdio: 'pipe', shell: false,
+  }).toString());
+  const existing = ids.find((x) => x.name === 'ig-comment-dm-db');
+  if (!existing) {
+    console.log('查無既有正式 D1；首次部署將交由 Wrangler 建立。');
+    return;
+  }
+  const region = cfg.slice(nameIdx, nameIdx + 180);
+  const configured = region.match(/"database_id"\s*:\s*"([^"]+)"/);
+  if (configured) {
+    if (configured[1] !== existing.uuid) {
+      throw new Error('現有 wrangler.jsonc 的 DB ID 與 Cloudflare 正式資料庫不符，已中止部署。');
+    }
+    return;
+  }
   const lineStart = cfg.lastIndexOf('\n', nameIdx) + 1;
   const indent = cfg.slice(lineStart, nameIdx);
   const insertAt = cfg.indexOf('\n', nameIdx);
-  const updated =
-    cfg.slice(0, insertAt) + `\n${indent}"database_id": "${found.uuid}",` + cfg.slice(insertAt);
-  writeFileSync('wrangler.jsonc', updated);
-  console.log(`已把 ${dbName} 的 database_id 寫回 wrangler.jsonc`);
+  writeFileSync(configPath,
+    cfg.slice(0, insertAt) + `\n${indent}"database_id": "${existing.uuid}",` + cfg.slice(insertAt));
+  console.log('已連回既有正式 D1（不建立新資料庫、不清除資料）。');
 }
 
-run(npm, ['ci', '--prefix', 'admin']); // 確保 admin 依賴存在（Workers Builds 等環境只裝根目錄依賴）
-run(npm, ['run', 'build', '--prefix', 'admin']);
-run(npx, ['wrangler', 'deploy', ...envArgs]);
-ensureDatabaseId(DB_NAME);
-run(npx, ['wrangler', 'd1', 'migrations', 'apply', 'DB', '--remote', ...envArgs]);
+bindExistingProductionDb();
 
-console.log('\n部署完成。首次部署請立刻打開 https://<你的 Worker 網址>/admin 建立管理者帳號。');
+for (const queueName of ['ig-comment-events', 'ig-comment-events-dlq']) {
+  try {
+    execFileSync(npx, ['wrangler', 'queues', 'create', queueName], { stdio: 'pipe', shell: false });
+    console.log(`已建立 Queue：${queueName}`);
+  } catch {
+    console.log(`Queue ${queueName} 可能已存在；部署時會再驗證綁定。`);
+  }
+}
+
+run(npm, ['ci', '--prefix', 'admin']);
+run(npm, ['run', 'build', '--prefix', 'admin']);
+run(npx, ['wrangler', 'deploy']);
+// 首次部署由 Wrangler 自動建立 D1，必須在套用 migrations 前回填 UUID。
+bindExistingProductionDb();
+run(npx, ['wrangler', 'd1', 'migrations', 'apply', 'DB', '--remote']);
+console.log('\n正式環境部署完成。請先驗證 /api/health、/admin 及 Meta Token，勿直接開啟大量回覆。');

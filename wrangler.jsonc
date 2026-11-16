@@ -28,7 +28,9 @@
   // 隱私頁聯絡信箱取自 /admin 首次設定建立的管理者 Email。
   "vars": {
     // 串接前請對照 Meta 官方文件確認當下最新的 Graph API 版本號。
-    "META_GRAPH_API_VERSION": "v21.0",
+    "META_GRAPH_API_VERSION": "v27.0",
+    "META_LOGIN_MODE": "unified",
+    "META_BASE_URL": "https://graph.facebook.com",
     "APP_ENV": "production",
     "LOG_LEVEL": "info"
   },
@@ -80,59 +82,5 @@
       "0 19 * * *",
       "*/5 * * * *" // Outbox 失敗重送（每 5 分鐘）
     ]
-  },
-  // 測試環境：`npm run deploy -- --env staging`。
-  // 獨立的 Worker／D1／Queue／secrets（secrets 要用 `wrangler secret put <NAME> --env staging`
-  // 另外設定），與正式環境零共用；cron 停用（測試用手動同步即可）。
-  "env": {
-    "staging": {
-      "name": "ig-comment-dm-bot-staging",
-      "assets": {
-        "directory": "./admin/dist",
-        "binding": "ASSETS"
-      },
-      "vars": {
-        "META_GRAPH_API_VERSION": "v21.0",
-        "APP_ENV": "staging",
-        "LOG_LEVEL": "debug"
-      },
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "ig-comment-dm-db-staging",
-          "migrations_dir": "drizzle/migrations"
-        }
-      ],
-      "ratelimits": [
-        {
-          "name": "ADMIN_RATE_LIMITER",
-          "namespace_id": "1001",
-          "simple": {
-            "limit": 120,
-            "period": 60
-          }
-        }
-      ],
-      "queues": {
-        "producers": [
-          {
-            "binding": "COMMENT_QUEUE",
-            "queue": "ig-comment-events-staging"
-          }
-        ],
-        "consumers": [
-          {
-            "queue": "ig-comment-events-staging",
-            "max_batch_size": 10,
-            "max_batch_timeout": 5,
-            "max_retries": 3,
-        "dead_letter_queue": "ig-comment-events-staging-dlq"
-          }
-        ]
-      },
-      "triggers": {
-        "crons": []
-      }
-    }
   }
 }

@@ -19,7 +19,9 @@ export type AppBindings = {
   ADMIN_SESSION_SECRET: string;
   ADMIN_SETUP_TOKEN: string;
   META_GRAPH_API_VERSION: string;
+  META_LOGIN_MODE?: string;
   META_BASE_URL?: string;
+  INSTAGRAM_ACCOUNT_ID?: string;
   APP_ENV: string;
   // 隱私政策頁的自訂聯絡方式（選填，純文字）。未設定時顯示通用文字，不點名任何身分。
   PRIVACY_CONTACT?: string;

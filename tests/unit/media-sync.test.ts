@@ -189,13 +189,47 @@ describe('ensureAccountRegistered（帳號自動註冊）', () => {
     expect(rows[0].username).toBe('my_shop');
   });
 
-  it('does not call Meta when an account already exists', async () => {
+  it('verifies existing IG identity and refuses silent account switching', async () => {
     await emptyDb.insert(schema.instagramAccounts).values({ id: 'acct', instagramAccountId: 'ig-acct' });
-    const fetchImpl = mockFetch(200, { id: 'should-not-be-used' });
+    const fetchImpl = mockFetch(200, { id: 'another-account' });
     const err = await ensureAccountRegistered(emptyDb, metaClient(fetchImpl));
+    expect(err).toContain('不符');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [row] = await emptyDb.select().from(schema.instagramAccounts);
+    expect(row.instagramAccountId).toBe('ig-acct');
+  });
+
+  it('retains the existing account when the new token resolves to the same IG ID', async () => {
+    await emptyDb.insert(schema.instagramAccounts).values({ id: 'acct', instagramAccountId: 'ig-acct' });
+    const err = await ensureAccountRegistered(emptyDb, metaClient(mockFetch(200, { id: 'ig-acct' })));
     expect(err).toBeNull();
-    expect(fetchImpl).not.toHaveBeenCalled();
     expect(await emptyDb.select().from(schema.instagramAccounts)).toHaveLength(1);
+  });
+
+  it('Unified Login queries the specified IG account, not System User /me', async () => {
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      expect(String(url)).toContain('/17841400000000001?');
+      expect(String(url)).not.toContain('/me?');
+      return new Response(JSON.stringify({ id: '17841400000000001', username: 'shop' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const err = await ensureAccountRegistered(emptyDb, metaClient(fetchImpl), {
+      loginMode: 'unified', instagramAccountId: '17841400000000001',
+    });
+    expect(err).toBeNull();
+  });
+
+  it('Unified Login finds the unique assigned IG account when no ID is given', async () => {
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.includes('me/assigned_instagram_accounts')) {
+        return new Response(JSON.stringify({ data: [{ id: 'ig-1' }] }), { status: 200 });
+      }
+      expect(u).toContain('/ig-1?');
+      return new Response(JSON.stringify({ id: 'ig-1' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const err = await ensureAccountRegistered(emptyDb, metaClient(fetchImpl), { loginMode: 'unified' });
+    expect(err).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it('returns a descriptive error when the token is invalid', async () => {

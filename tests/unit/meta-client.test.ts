@@ -87,3 +87,18 @@ describe('sendPrivateReply payload', () => {
     expect(decoded).not.toContain('template');
   });
 });
+
+
+describe('Meta host compatibility', () => {
+  it('supports Unified Login using Facebook Graph host', async () => {
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      urls.push(String(url));
+      return new Response(JSON.stringify({ id: 'ig-1' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const meta = new MetaClient({ accessToken: 'tok', graphApiVersion: 'v27.0',
+      baseUrl: 'https://graph.facebook.com', fetchImpl });
+    await meta.get('ig-1', { fields: 'id' });
+    expect(urls[0]).toContain('https://graph.facebook.com/v27.0/ig-1?');
+  });
+});

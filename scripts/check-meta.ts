@@ -7,11 +7,14 @@
 // 需要的值（填在 .dev.vars）：
 //   INSTAGRAM_ACCOUNT_ACCESS_TOKEN=...   （必填）
 //   INSTAGRAM_ACCOUNT_ID=...     （選填；沒填會嘗試用 /me 推斷）
-//   META_GRAPH_API_VERSION=v21.0 （選填，預設 v21.0）
+//   META_GRAPH_API_VERSION=v27.0 （選填，預設 v27.0）
+//   META_LOGIN_MODE=unified   （新 App；舊 Instagram Login 用 instagram）
+//   INSTAGRAM_ACCOUNT_ID=... （Unified Login 必填：Instagram 專業帳號 ID）
 //   META_BASE_URL=...            （選填；Instagram Login 用 https://graph.instagram.com，
 //                                  Facebook Login 用 https://graph.facebook.com，預設前者）
 import { readFileSync } from 'node:fs';
 import { MetaClient } from '../src/meta/client';
+import { resolveMetaBaseUrl } from '../src/meta/config';
 
 // 直接在此定義媒體回應型別，避免 import src/meta/media.ts（它會連帶拉進 D1 型別，
 // 而本腳本跑在 Node、沒有 Workers 型別）。
@@ -50,11 +53,13 @@ async function main() {
   const vars = loadDevVars();
   const token = get(vars, 'INSTAGRAM_ACCOUNT_ACCESS_TOKEN');
   const accountId = get(vars, 'INSTAGRAM_ACCOUNT_ID');
-  const version = get(vars, 'META_GRAPH_API_VERSION') || 'v21.0';
-  const baseUrl = get(vars, 'META_BASE_URL') || 'https://graph.instagram.com';
+  const version = get(vars, 'META_GRAPH_API_VERSION') || 'v27.0';
+  const mode = get(vars, 'META_LOGIN_MODE') || 'unified';
+  const baseUrl = resolveMetaBaseUrl(mode, get(vars, 'META_BASE_URL'));
 
   console.log('\n=== Meta / Instagram 憑證健康檢查 ===\n');
   console.log(info(`Graph API 版本：${version}`));
+  console.log(info(`授權模式：${mode}`));
   console.log(info(`API Host：${baseUrl}`));
   console.log(info(`帳號 ID：${accountId || '(未提供，將試 /me)'}`));
   console.log('');
@@ -67,7 +72,11 @@ async function main() {
   const client = new MetaClient({ accessToken: token, graphApiVersion: version, baseUrl });
 
   // 1) Token 有效性 + 帳號資訊
-  const target = accountId || 'me';
+  if (mode === 'unified' && !accountId) {
+    console.log(bad('Unified Login 必須先設定 INSTAGRAM_ACCOUNT_ID（授權的 IG 專業帳號 ID），不能用 System User 的 /me 當 IG ID。'));
+    process.exit(1);
+  }
+  const target = mode === 'unified' ? accountId : 'me';
   const acct = await client.get<{ id?: string; username?: string; account_type?: string; media_count?: number }>(
     target,
     { fields: 'id,username,account_type,media_count' },
@@ -82,7 +91,7 @@ async function main() {
       console.log('   → 權限不足。請確認 App 已取得 instagram_basic 等 scope 並通過 App Review。');
     } else {
       console.log('   → 也可能是 API Host 不對：Instagram Login 用 graph.instagram.com，');
-      console.log('      Facebook Login 用 graph.facebook.com（在 .dev.vars 設 META_BASE_URL 再試）。');
+      console.log('      Unified Login 使用 graph.facebook.com；Instagram Login 使用 graph.instagram.com。');
     }
     process.exit(1);
   }
@@ -111,7 +120,7 @@ async function main() {
 
   console.log('\n=== 檢查結束 ===');
   console.log('若上面帳號與貼文都 ✓，代表 token 與帳號串接沒問題，可以進入部署與 webhook 設定。');
-  console.log('公開回覆 / Private Reply 的權限（instagram_manage_comments / instagram_manage_messages）');
+  console.log('公開回覆 / Private Reply 的權限：Unified Login 使用 instagram_manage_*；舊 Instagram Login 使用 instagram_business_manage_*');
   console.log('需要實際留言事件才驗證得到，且 messages 權限通常要通過 App Review。\n');
 }
 
