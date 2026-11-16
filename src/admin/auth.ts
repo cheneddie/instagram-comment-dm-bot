@@ -12,6 +12,7 @@ import { getDummyHash, hashPassword, verifyPassword } from '../security/password
 import { adminApiRateLimitMiddleware, loginRateLimitMiddleware } from '../security/rate-limit';
 import {
   SESSION_COOKIE_NAME,
+  credentialRevision,
   createSessionCookie,
   serializeClearedSessionCookie,
   serializeSessionCookie,
@@ -54,6 +55,15 @@ export function requireAdminAuth() {
     if (!result.valid) {
       return c.json({ error: '未授權' }, 401);
     }
+    // 已簽署的 Cookie 仍須綁定目前密碼版本；密碼變更後舊 Cookie 立即失效。
+    const rows = await createDb(c.env.DB)
+      .select({ passwordHash: adminUsers.passwordHash })
+      .from(adminUsers)
+      .where(eq(adminUsers.id, result.payload.sub))
+      .limit(1);
+    if (!rows[0] || !result.payload.rev) return c.json({ error: '未授權' }, 401);
+    const currentRevision = await credentialRevision(c.env.ADMIN_SESSION_SECRET, rows[0].passwordHash);
+    if (currentRevision !== result.payload.rev) return c.json({ error: '未授權' }, 401);
     c.set('adminUserId', result.payload.sub);
     return next();
   });
@@ -64,6 +74,21 @@ const MIN_PASSWORD_LENGTH = 12;
 // 上限：PBKDF2 對輸入全文做多輪雜湊，超長密碼是免費的 CPU 放大器；256 足夠任何 passphrase。
 const MAX_PASSWORD_LENGTH = 256;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+async function verifySetupToken(expected: string | undefined, provided: unknown): Promise<boolean> {
+  // 未設定、短 token、異常過長輸入全部 fail-closed。雜湊後比較固定 32 bytes。
+  if (!expected || expected.length < 32 || typeof provided !== 'string' || provided.length > 4096) return false;
+  const encoder = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(expected)),
+    crypto.subtle.digest('SHA-256', encoder.encode(provided)),
+  ]);
+  const left = new Uint8Array(a);
+  const right = new Uint8Array(b);
+  let difference = 0;
+  for (let i = 0; i < left.length; i += 1) difference |= left[i] ^ right[i];
+  return difference === 0;
+}
 
 export function createAuthRoutes() {
   const auth = new Hono<AuthEnv>();
@@ -83,7 +108,7 @@ export function createAuthRoutes() {
   auth.post('/setup', csrfMiddleware(), loginRateLimitMiddleware(), async (c) => {
     const ip = c.req.header('CF-Connecting-IP') ?? null;
 
-    let body: { email?: unknown; password?: unknown };
+    let body: { email?: unknown; password?: unknown; setupToken?: unknown };
     try {
       body = await c.req.json();
     } catch {
@@ -115,6 +140,15 @@ export function createAuthRoutes() {
       return c.json({ error: '系統已完成初始設定' }, 403);
     }
 
+    // 必須持有部署者放在 Cloudflare Secret 的高熵初始化碼，不能先搶先贏。
+    if (!c.env.ADMIN_SETUP_TOKEN || c.env.ADMIN_SETUP_TOKEN.length < 32) {
+      return c.json({ error: '管理員初始化尚未設定，請先設定 ADMIN_SETUP_TOKEN' }, 503);
+    }
+    if (!(await verifySetupToken(c.env.ADMIN_SETUP_TOKEN, body.setupToken))) {
+      await writeAuditLog(c.env, { adminUserId: null, action: 'admin.setup.rejected', ipAddress: ip });
+      return c.json({ error: '初始化憑證無效' }, 403);
+    }
+
     const id = crypto.randomUUID();
     const passwordHash = await hashPassword(password);
     const now = new Date().toISOString();
@@ -136,7 +170,7 @@ export function createAuthRoutes() {
     }
 
     // 建立成功即發 Session（免再登入一次）。
-    const cookie = await createSessionCookie(c.env.ADMIN_SESSION_SECRET, id, SESSION_TTL_SECONDS);
+    const cookie = await createSessionCookie(c.env.ADMIN_SESSION_SECRET, id, SESSION_TTL_SECONDS, passwordHash);
     c.header('Set-Cookie', serializeSessionCookie(cookie, SESSION_TTL_SECONDS));
     await writeAuditLog(c.env, {
       adminUserId: id,
@@ -212,6 +246,7 @@ export function createAuthRoutes() {
         action: 'admin.password.change.success',
         ipAddress: ip,
       });
+      c.header('Set-Cookie', serializeClearedSessionCookie());
       return c.json({ ok: true });
     },
   );
@@ -257,7 +292,7 @@ export function createAuthRoutes() {
       return c.json({ error: 'Email 或密碼錯誤' }, 401);
     }
 
-    const cookie = await createSessionCookie(c.env.ADMIN_SESSION_SECRET, user.id, SESSION_TTL_SECONDS);
+    const cookie = await createSessionCookie(c.env.ADMIN_SESSION_SECRET, user.id, SESSION_TTL_SECONDS, user.passwordHash);
     c.header('Set-Cookie', serializeSessionCookie(cookie, SESSION_TTL_SECONDS));
     await writeAuditLog(c.env, {
       adminUserId: user.id,

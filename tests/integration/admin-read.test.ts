@@ -17,7 +17,8 @@ beforeEach(async () => {
   sqlite = new Database(':memory:');
   applyMigrations(sqlite, join(__dirname, '../../drizzle/migrations'));
   const db = drizzle(sqlite, { schema });
-  await db.insert(schema.adminUsers).values({ id: 'admin-1', email: 'a@b.com', passwordHash: await hashPassword('x') });
+  const adminHash = await hashPassword('x');
+  await db.insert(schema.adminUsers).values({ id: 'admin-1', email: 'a@b.com', passwordHash: adminHash });
   await db.insert(schema.instagramAccounts).values({ id: 'acct', instagramAccountId: 'ig-acct' });
   await db.insert(schema.instagramMedia).values({ id: 'media', instagramAccountId: 'acct', instagramMediaId: 'ig-media', mediaType: 'IMAGE', publishedAt: '2026-01-01T00:00:00Z' });
   await db.insert(schema.automations).values({ id: 'auto', instagramMediaId: 'media', name: 'a', status: 'active' });
@@ -29,7 +30,7 @@ beforeEach(async () => {
     ADMIN_SESSION_SECRET: SECRET,
     ADMIN_RATE_LIMITER: { limit: async () => ({ success: true }) },
   };
-  cookie = `${SESSION_COOKIE_NAME}=${await createSessionCookie(SECRET, 'admin-1', 3600)}`;
+  cookie = `${SESSION_COOKIE_NAME}=${await createSessionCookie(SECRET, 'admin-1', 3600, adminHash)}`;
 });
 
 const get = (path: string) => new Request(`https://igbot.example.com${path}`, { headers: { Cookie: cookie } });

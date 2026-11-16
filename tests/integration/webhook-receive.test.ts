@@ -73,6 +73,28 @@ async function post(body: string, signature?: string) {
 }
 
 describe('POST /api/webhooks/meta/instagram', () => {
+  it('rejects oversized requests before verifying signatures', async () => {
+    const result = await post('x'.repeat(1024 * 1024 + 1));
+    expect(result.status).toBe(413);
+    expect(enqueued).toHaveLength(0);
+  });
+
+  it('allows recovery after the queue fails on the first delivery', async () => {
+    const body = commentPayload('recovery-1');
+    const signature = await sign(body);
+    env.COMMENT_QUEUE = { send: async () => { throw new Error('queue unavailable'); } };
+    const failed = await post(body, signature);
+    expect(failed.status).toBe(500);
+    const db = drizzle(sqlite, { schema });
+    const pending = await db.select().from(webhookEvents);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].status).toBe('received');
+    env.COMMENT_QUEUE = { send: async (m: unknown) => void enqueued.push(m) };
+    expect((await post(body, signature)).status).toBe(200);
+    expect(enqueued).toHaveLength(1);
+    const queued = await db.select().from(webhookEvents);
+    expect(queued[0].status).toBe('queued');
+  });
   it('rejects an invalid signature and does not enqueue', async () => {
     const body = commentPayload('c1');
     const res = await post(body, 'sha256=deadbeef');

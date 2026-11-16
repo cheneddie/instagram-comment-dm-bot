@@ -16,6 +16,7 @@ export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [setupToken, setSetupToken] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -43,7 +44,7 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       if (mode === 'setup') {
-        await apiPost('/api/admin/auth/setup', { email, password });
+        await apiPost('/api/admin/auth/setup', { email, password, setupToken });
       } else {
         await apiPost('/api/admin/auth/login', { email, password });
       }
@@ -71,7 +72,7 @@ export function LoginPage() {
         <h1 className="login-title">{isSetup ? '建立管理者帳號' : '登入管理後台'}</h1>
         <p className="login-hint">
           {isSetup
-            ? '首次啟動：建立唯一的管理者帳號。完成後即自動登入，此頁不會再出現。'
+            ? '首次啟動：請輸入部署時設定的初始化憑證，建立唯一的管理者帳號。'
             : '請使用管理者帳號登入以管理自動化與查看紀錄。'}
         </p>
 
@@ -112,6 +113,13 @@ export function LoginPage() {
               required
             />
           </div>
+          {isSetup ? (
+            <div className="form-field">
+              <label className="label" htmlFor="setup-token">初始化憑證（ADMIN_SETUP_TOKEN）</label>
+              <input id="setup-token" className="input" type="password" autoComplete="off"
+                value={setupToken} onChange={(e) => setSetupToken(e.target.value)} required />
+            </div>
+          ) : null}
           {isSetup ? (
             <div className="form-field">
               <label className="label" htmlFor="password-confirm">

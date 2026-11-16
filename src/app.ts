@@ -17,8 +17,11 @@ export type AppBindings = {
   WEBHOOK_VERIFY_TOKEN: string;
   INSTAGRAM_ACCOUNT_ACCESS_TOKEN: string;
   ADMIN_SESSION_SECRET: string;
+  ADMIN_SETUP_TOKEN: string;
   META_GRAPH_API_VERSION: string;
+  META_LOGIN_MODE?: string;
   META_BASE_URL?: string;
+  INSTAGRAM_ACCOUNT_ID?: string;
   APP_ENV: string;
   // 隱私政策頁的自訂聯絡方式（選填，純文字）。未設定時顯示通用文字，不點名任何身分。
   PRIVACY_CONTACT?: string;
@@ -57,7 +60,8 @@ export function createApp() {
 </ul>
 <h2>資料的保存與刪除</h2>
 <ul>
-<li>留言事件與執行紀錄僅保存於管理者自行部署的資料庫，作為執行紀錄用途。</li>
+<li>原始 Webhook Payload 超過 30 天清空；自動化執行紀錄的留言文字與留言者識別資料超過 90 天去識別化；API 呼叫細節超過 180 天刪除。</li>
+<li>管理員稽核紀錄的來源 IP 超過 180 天去識別化；部分事件識別碼與統計資料仍依系統運作需要保留。</li>
 <li>如希望刪除與您相關的紀錄，請透過下方聯絡方式提出，我們將於合理期間內刪除。</li>
 </ul>
 <h2>聯絡方式</h2>

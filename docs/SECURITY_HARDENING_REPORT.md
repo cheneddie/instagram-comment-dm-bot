@@ -1,0 +1,43 @@
+# 安全強化實作報告（2026-11-14）
+
+## 基準
+上游 Fork `main` HEAD：`4a05ab7afcfa98105c778d38d6526d339e56892b`。
+工作分支：`security/hardening-2026-11-14`。僅檢查公開程式碼，未接觸正式 Cloudflare/Meta 帳號。
+
+## 已實作（需 CI 檢查）
+- 初次建立管理員：加入高強度 ADMIN_SETUP_TOKEN，未設定 fail-closed；網頁輸入初始化碼，建帳後不可再次 setup。
+- Session 綁定目前密碼雜湊的簽署版次，改密碼立即撤銷全部舊 Session。
+- Webhook 串流讀取限制 1 MiB；D1→Queue 使用事件持久狀態與派工 claim；Queue 失敗可重送，Cron 每 5 分鐘修復 pending。
+- 全域發送上限改成有安全預設值，避免 null 設定被當無上限。
+- 部署腳本移除 Shell 字串拼接，--env 白名單僅 staging。
+- CI Node 改用 24，另加 npm audit 與 Dependabot；保留測試。
+- 重要改動附對應安全回歸測試。
+
+## 未完成／殘餘風險
+1. 根目錄與 admin 的 Vite 已在安全分支提升至 8.3.8，Hono 4.13.18，並重新產生 lockfile；須以最新 CI 成果再次驗證。
+2. `drizzle-kit` 的間接 `esbuild@0.18.20`／棄用依賴需在上游或替代方案解決。
+3. Queue→Meta API 無法保證端對端 exactly-once；Meta 已發出但本地狀態寫入失敗時仍存在重送可能，後續需鎖／lease／reconciliation。
+4. 已設定 Cloudflare Dead Letter Queue 並加入安全的 Consumer 失敗日誌；仍未實作即時告警、DLQ 管理 UI、對已送出 Meta 訊息的人工核對流程。
+5. 已新增超過 90 天的 Automation Run 個資遮蔽及超過 180 天的稽核 IP 遮蔽；仍缺完整指定個人資料刪除、自動化事件識別碼保存期限、全面輸入長度限制、安全標頭與部署沙箱測試。
+6. 加入 CodeQL 靜態分析與官方 Actions SHA pin，需確認 GitHub Code Scanning 權限及 CI 結果。
+7. 2026-11-14 GitHub Actions 在程式 HEAD fb2e729 上 CI 通過（33 個 test files、240/240 tests、lint、typecheck、build）；Security checks 通過：root 11 moderate / 0 high，admin 0，production 0。CodeQL static analysis workflow 成功完成；仍須在 GitHub Security 頁面查看實際 alerts。尚未做 Workers 真實環境及 Meta DM 測試。
+
+## 安全公告
+- https://github.com/vitejs/vite/security/advisories/GHSA-p4f5-76q4-ffq7
+- https://github.com/advisories/GHSA-67mh-4wv8-2f99
+
+這是階段性工程修補，不代表所有資安漏洞已清零，也不代表已可正式上線。
+
+## 2026-11-14 實際驗證證據
+- CI 成功：[run 43608474781](https://github.com/cheneddie/instagram-comment-dm-bot/actions/runs/43608474781)（240/240 測試通過，Lint、Typecheck、Build 成功）。
+- Security checks 成功：[run 43608474764](https://github.com/cheneddie/instagram-comment-dm-bot/actions/runs/43608474764)（root 11 moderate/0 high；admin 0；production 0）。
+- CodeQL 工作流程成功：[run 43608474800](https://github.com/cheneddie/instagram-comment-dm-bot/actions/runs/43608474800)（成功執行不等於沒有 alerts）。
+- 部署 Staging / 真實 Meta 行為：NOT TESTED。
+
+## 2026-11-16 Unified Login 修正（分支新增，需 CI 驗證）
+- 移除 staging 配置與部署入口，僅保留正式 Worker／既有 D1／Queue；部署前回填現有 D1 UUID，拒絕錯誤 ID。
+- 新 Meta App 採 Unified Login：graph.facebook.com/v27.0／System User token；避免把 /me System User 當 IG 專業帳號。
+- Queue Consumer 與貼文同步共用一致的 API Host，明確記錄略過留言的原因。
+- 切換 Meta App／Token 時驗證 IG ID 是否仍符合 D1 既有帳號，不會自動覆蓋舊資料。
+- 舊 Instagram Login 僅供有可用舊 App 的環境明確設定；新 App 的 Invalid platform app 必須在 Meta Dashboard 修正認證配置，程式無法取代授權流程。
+- 文件與回歸測試已更新；真實的 Meta 登入、Webhook、公開回覆與 DM 仍須以使用者新 Meta App 實測。

@@ -1,7 +1,7 @@
 // Webhook 事件接收（spec.md 第 11.2 節）：POST /api/webhooks/meta/instagram。
 // 順序：讀 raw body → 驗簽 → 解析 → 驗欄位 → 事件鍵 → 冪等寫 webhook_events → 送 Queue → 200。
 // 禁止在此等待任何 Meta API 呼叫（spec §11.2）。
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { Context } from 'hono';
 import type { AppBindings } from '../app';
 import { createDb } from '../database/client';
@@ -11,11 +11,41 @@ import { enqueueCommentEvent } from '../queue/producer';
 import { deriveEventKey, extractCommentEvents, extractStoryReplyEvents } from './event-parser';
 import { verifyWebhookSignature } from './signature';
 
+export const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
+
+// 以串流限制大小，避免無 Content-Length 的請求先佔用不受限記憶體。
+async function readBoundedBody(request: Request): Promise<Uint8Array | null> {
+  if (Number(request.headers.get('Content-Length')) > MAX_WEBHOOK_BODY_BYTES) return null;
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_WEBHOOK_BODY_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.byteLength; }
+  return merged;
+}
+
 export async function handleWebhookReceive(
   c: Context<{ Bindings: AppBindings }>,
 ): Promise<Response> {
   const logger = createLogger(c.env.LOG_LEVEL as never);
-  const rawBody = await c.req.arrayBuffer();
+  const rawBody = await readBoundedBody(c.req.raw);
+  if (!rawBody) return c.text('payload too large', 413);
   const signature = c.req.header('X-Hub-Signature-256');
 
   const valid = await verifyWebhookSignature(c.env.INSTAGRAM_APP_SECRET, rawBody, signature);
@@ -74,45 +104,55 @@ export async function handleWebhookReceive(
 
   const db = createDb(c.env.DB);
   for (const ev of unified) {
-    const existing = await db
-      .select()
-      .from(webhookEvents)
-      .where(eq(webhookEvents.eventKey, ev.eventKey))
-      .limit(1);
-
-    if (existing.length > 0) {
-      // 重送：duplicate_count 加一，不再次入列（Consumer 端另有 automation_run 冪等）。
-      await db
-        .update(webhookEvents)
-        .set({
-          duplicateCount: existing[0].duplicateCount + 1,
-          lastReceivedAt: new Date().toISOString(),
-        })
-        .where(eq(webhookEvents.id, existing[0].id));
-      continue;
+    const existing = (await db.select().from(webhookEvents)
+      .where(eq(webhookEvents.eventKey, ev.eventKey)).limit(1))[0];
+    if (existing) {
+      await db.update(webhookEvents).set({
+        duplicateCount: sql`${webhookEvents.duplicateCount} + 1`,
+      }).where(eq(webhookEvents.id, existing.id));
+      if (existing.status === 'queued') continue;
+    } else {
+      await db.insert(webhookEvents).values({
+        id: crypto.randomUUID(),
+        eventKey: ev.eventKey,
+        eventType: ev.eventType,
+        instagramAccountId: ev.instagramAccountId,
+        instagramMediaId: ev.instagramMediaId,
+        instagramCommentId: ev.instagramCommentId,
+        rawPayload: JSON.stringify(payload),
+        signatureValid: 1,
+        status: 'received',
+      }).onConflictDoNothing();
     }
 
-    const id = crypto.randomUUID();
-    await db.insert(webhookEvents).values({
-      id,
-      eventKey: ev.eventKey,
-      eventType: ev.eventType,
-      instagramAccountId: ev.instagramAccountId,
-      instagramMediaId: ev.instagramMediaId,
-      instagramCommentId: ev.instagramCommentId,
-      rawPayload: JSON.stringify(payload),
-      signatureValid: 1,
-      status: 'received',
-    });
+    // 原子 claim：重複 webhook 不得同時對同一事件送 Queue。
+    // Worker 若在 queue.send 後、狀態更新前中斷，可能再次入列；
+    // Consumer 必須維持冪等（跨系統無法保證 exactly-once）。
+    const claimed = await db.update(webhookEvents)
+      .set({ status: 'dispatching', lastReceivedAt: new Date().toISOString() })
+      .where(and(eq(webhookEvents.eventKey, ev.eventKey), eq(webhookEvents.status, 'received')))
+      .returning({ id: webhookEvents.id });
+    const id = claimed[0]?.id;
+    if (!id) continue;
 
-    await enqueueCommentEvent(c.env.COMMENT_QUEUE, {
-      webhookEventId: id,
-      eventKey: ev.eventKey,
-      instagramAccountId: ev.instagramAccountId,
-      instagramMediaId: ev.instagramMediaId,
-      instagramCommentId: ev.instagramCommentId,
-      eventType: ev.eventType,
-    });
+    try {
+      await enqueueCommentEvent(c.env.COMMENT_QUEUE, {
+        webhookEventId: id,
+        eventKey: ev.eventKey,
+        instagramAccountId: ev.instagramAccountId,
+        instagramMediaId: ev.instagramMediaId,
+        instagramCommentId: ev.instagramCommentId,
+        eventType: ev.eventType,
+      });
+      await db.update(webhookEvents).set({ status: 'queued' })
+        .where(eq(webhookEvents.id, id));
+    } catch (error) {
+      // Queue 或 D1 更新失敗時恢復為 received，讓 Meta 重送／定期恢復任務接手。
+      // 若 Queue 已成功但狀態更新失敗，Consumer 的冪等與發送鎖仍需防重。
+      await db.update(webhookEvents).set({ status: 'received' })
+        .where(and(eq(webhookEvents.id, id), eq(webhookEvents.status, 'dispatching')));
+      throw error;
+    }
   }
 
   // 一律快速回 200，即使沒有可處理的事件（避免 Meta 重送）。

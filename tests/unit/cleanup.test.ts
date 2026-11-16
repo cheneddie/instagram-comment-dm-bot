@@ -66,6 +66,48 @@ describe('runDataCleanup — webhook payload retention (30 days)', () => {
   });
 });
 
+describe('runDataCleanup — automation run privacy retention (90 days)', () => {
+  it('redacts old commenter PII without deleting aggregate run statuses', async () => {
+    await db.insert(schema.instagramAccounts).values({ id: 'account', instagramAccountId: 'ig-account' });
+    await db.insert(schema.instagramMedia).values({
+      id: 'media', instagramAccountId: 'account', instagramMediaId: 'ig-media', mediaType: 'IMAGE',
+    });
+    await db.insert(schema.automations).values({ id: 'auto', instagramMediaId: 'media', name: 'test' });
+    await db.insert(schema.automationRuns).values([
+      { id: 'old', automationId: 'auto', instagramCommentId: 'old-c', instagramMediaId: 'ig-media',
+        status: 'completed', createdAt: iso(91 * DAY_MS), commenterId: 'private-id',
+        commenterUsername: 'private-user', originalCommentText: 'private-message', normalizedCommentText: 'private-message' },
+      { id: 'fresh', automationId: 'auto', instagramCommentId: 'new-c', instagramMediaId: 'ig-media',
+        status: 'completed', createdAt: iso(1 * DAY_MS), commenterId: 'recent-id',
+        originalCommentText: 'recent-message' },
+    ]);
+    const result = await runDataCleanup(db, NOW);
+    expect(result.automationRunPiiRedacted).toBe(1);
+    const rows = await db.select().from(schema.automationRuns);
+    const old = rows.find((r: { id: string }) => r.id === 'old');
+    const fresh = rows.find((r: { id: string }) => r.id === 'fresh');
+    expect(old.status).toBe('completed');
+    expect(old.originalCommentText).toBeNull();
+    expect(old.commenterId).toBeNull();
+    expect(old.commenterUsername).toBeNull();
+    expect(fresh.originalCommentText).toBe('recent-message');
+  });
+});
+
+describe('runDataCleanup — audit IP privacy retention (180 days)', () => {
+  it('clears old audit IP addresses, preserving the audit action', async () => {
+    await db.insert(schema.auditLogs).values([
+      { id: 'old', action: 'admin.login.failure', ipAddress: '10.1.2.3', createdAt: iso(181 * DAY_MS) },
+      { id: 'new', action: 'admin.login.success', ipAddress: '10.1.2.4', createdAt: iso(1 * DAY_MS) },
+    ]);
+    const result = await runDataCleanup(db, NOW);
+    expect(result.auditIpsRedacted).toBe(1);
+    const logs = await db.select().from(schema.auditLogs);
+    expect(logs.find((r: { id: string }) => r.id === 'old').ipAddress).toBeNull();
+    expect(logs.find((r: { id: string }) => r.id === 'new').ipAddress).toBe('10.1.2.4');
+  });
+});
+
 describe('runDataCleanup — api attempt retention (180 days)', () => {
   it('deletes attempts older than 180 days and keeps recent ones', async () => {
     await seedAttempt('old', iso(181 * DAY_MS));

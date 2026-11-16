@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import * as schema from '../../src/database/schema';
 import {
   acquireSendPermission,
+  DEFAULT_SEND_LIMITS,
   minuteWindowStart,
   taipeiDayWindowStart,
 } from '../../src/automation/send-gate';
@@ -56,13 +57,29 @@ describe('acquireSendPermission — emergency stop', () => {
     expect(res).toEqual({ allowed: false, reason: 'emergency_stop' });
   });
 
-  it('allows when there are no settings and no caps', async () => {
+  it('allows ordinary sends when settings are absent (safe caps still apply)', async () => {
     const res = await acquireSendPermission(db, baseInput);
     expect(res).toEqual({ allowed: true, reason: null });
   });
 });
 
 describe('acquireSendPermission — system minute/day caps', () => {
+  it('denies after the safe default per-minute cap when settings are absent', async () => {
+    for (let i = 0; i < DEFAULT_SEND_LIMITS.privatePerMinute; i += 1) {
+      const result = await acquireSendPermission(db, { ...baseInput, actionType: 'private_reply' });
+      expect(result.allowed).toBe(true);
+    }
+    expect(await acquireSendPermission(db, { ...baseInput, actionType: 'private_reply' }))
+      .toEqual({ allowed: false, reason: 'system_minute_limit' });
+  });
+
+  it('still enforces safe caps when settings fields are NULL', async () => {
+    await seedSettings();
+    for (let i = 0; i < DEFAULT_SEND_LIMITS.privatePerMinute; i += 1) {
+      expect((await acquireSendPermission(db, { ...baseInput, actionType: 'private_reply' })).allowed).toBe(true);
+    }
+    expect((await acquireSendPermission(db, { ...baseInput, actionType: 'private_reply' })).allowed).toBe(false);
+  });
   it('enforces the per-minute cap for the matching action type', async () => {
     await seedSettings({ maxPublicRepliesPerMinute: 2 });
     expect((await acquireSendPermission(db, baseInput)).allowed).toBe(true);
@@ -74,7 +91,7 @@ describe('acquireSendPermission — system minute/day caps', () => {
   it('does not count public sends against the private cap', async () => {
     await seedSettings({ maxPublicRepliesPerMinute: 1 });
     expect((await acquireSendPermission(db, baseInput)).allowed).toBe(true);
-    // public 已滿，但 private 沒設上限 → 仍允許
+    // public 已滿，但 private 的獨立預設上限未達 → 仍允許
     const dm = await acquireSendPermission(db, { ...baseInput, actionType: 'private_reply' });
     expect(dm.allowed).toBe(true);
     // public 第二次 → 拒絕

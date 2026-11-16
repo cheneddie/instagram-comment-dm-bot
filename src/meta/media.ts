@@ -9,6 +9,7 @@ import * as schema from '../database/schema';
 import { automations, instagramAccounts, instagramMedia } from '../database/schema';
 import { bindNextPostAutomation } from '../automation/apply-scope';
 import { MetaClient, type MetaClient as MetaClientType } from './client';
+import { resolveMetaBaseUrl } from './config';
 
 type SchemaDb = BaseSQLiteDatabase<'sync' | 'async', unknown, typeof schema>;
 
@@ -249,36 +250,66 @@ export interface SyncSummary {
 // 帳號自動註冊：instagram_accounts 為空時，用 access token 打 GET /me 取得帳號
 // 資訊並寫入。token 本身就足以識別帳號，使用者不需另外提供帳號 ID。
 // 回傳 null 表示成功或不需註冊；否則回傳錯誤描述。
+export interface AccountRegistrationOptions {
+  loginMode?: 'instagram' | 'unified';
+  instagramAccountId?: string;
+}
+
 export async function ensureAccountRegistered(
   db: SchemaDb,
   client: MetaClientType,
+  options: AccountRegistrationOptions = {},
 ): Promise<string | null> {
-  const existing = await db.select().from(instagramAccounts).limit(1);
-  if (existing.length > 0) return null;
+  const existing = (await db.select().from(instagramAccounts).limit(1))[0];
+  const loginMode = options.loginMode ?? 'instagram';
+
+  // 新 App 的 Unified Login 回傳 System User token，GET /me 是系統使用者，
+  // 不是 Instagram 專業帳號！必須先找出授權的 IG 帳號 ID。
+  let igId = options.instagramAccountId?.trim() || existing?.instagramAccountId || '';
+  if (loginMode === 'unified' && !igId) {
+    const assigned = await client.get<{ data?: Array<{ id?: string }> }>(
+      'me/assigned_instagram_accounts', { fields: 'id' },
+    );
+    if (!assigned.ok) {
+      return 'Unified Login 查詢授權 IG 帳號失敗：請檢查 business_management／IG 資產授權，或設定 INSTAGRAM_ACCOUNT_ID';
+    }
+    const ids = (assigned.data?.data ?? []).map((row) => row.id).filter((id): id is string => Boolean(id));
+    if (ids.length !== 1) {
+      return `Unified Login 授權 IG 帳號數量為 ${ids.length}；請設定 INSTAGRAM_ACCOUNT_ID 指定單一帳號`;
+    }
+    igId = ids[0];
+  }
 
   const res = await client.get<{
     id?: string;
     username?: string;
     account_type?: string;
     profile_picture_url?: string;
-  }>('me', { fields: 'id,username,account_type,profile_picture_url' });
+  }>(loginMode === 'unified' ? igId : 'me', {
+    fields: 'id,username,account_type,profile_picture_url',
+  });
   if (!res.ok || !res.data?.id) {
     const reason = res.failure?.nonRetryableReason ?? (res.failure?.networkError ? 'network_error' : 'http_error');
     const detail = res.failure?.metaErrorMessage
       ? `｜Meta：(code ${res.failure?.metaErrorCode ?? '?'}) ${res.failure.metaErrorMessage}`
       : '';
-    return `自動註冊 Instagram 帳號失敗 (HTTP ${res.status}, ${reason})${detail}——請確認 INSTAGRAM_ACCOUNT_ACCESS_TOKEN 是否有效`;
+    return `Instagram 帳號驗證失敗 (HTTP ${res.status}, ${reason})${detail}；請確認登入模式、Token 與授權 IG ID`;
   }
-  await db
-    .insert(instagramAccounts)
-    .values({
-      id: crypto.randomUUID(),
-      instagramAccountId: res.data.id,
-      username: res.data.username ?? null,
-      accountType: res.data.account_type ?? null,
-      profilePictureUrl: res.data.profile_picture_url ?? null,
-    })
-    .onConflictDoNothing();
+  if (existing) {
+    // 切換 Meta App 時絕不可悄悄把既有資料庫指向另一個 IG 帳號。
+    if (existing.instagramAccountId !== res.data.id) {
+      return '目前 Meta Token 指向的 IG 帳號與資料庫原有帳號不符；已拒絕切換，請先核對帳號 ID';
+    }
+    return null;
+  }
+
+  await db.insert(instagramAccounts).values({
+    id: crypto.randomUUID(),
+    instagramAccountId: res.data.id,
+    username: res.data.username ?? null,
+    accountType: res.data.account_type ?? null,
+    profilePictureUrl: res.data.profile_picture_url ?? null,
+  }).onConflictDoNothing();
   return null;
 }
 
@@ -288,10 +319,13 @@ export async function runScheduledSync(env: AppBindings): Promise<SyncSummary> {
   const client = new MetaClient({
     accessToken: env.INSTAGRAM_ACCOUNT_ACCESS_TOKEN,
     graphApiVersion: env.META_GRAPH_API_VERSION,
-    baseUrl: env.META_BASE_URL || undefined,
+    baseUrl: resolveMetaBaseUrl(env.META_LOGIN_MODE, env.META_BASE_URL),
   });
 
-  const registerError = await ensureAccountRegistered(db, client);
+  const registerError = await ensureAccountRegistered(db, client, {
+    loginMode: env.META_LOGIN_MODE === 'unified' ? 'unified' : 'instagram',
+    instagramAccountId: env.INSTAGRAM_ACCOUNT_ID,
+  });
   if (registerError) {
     return { accounts: 0, inserted: 0, updated: 0, deleted: 0, expiredStories: 0, errors: [registerError] };
   }

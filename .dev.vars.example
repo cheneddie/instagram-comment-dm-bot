@@ -16,3 +16,17 @@ INSTAGRAM_ACCOUNT_ACCESS_TOKEN=
 
 # 管理者 Session 簽章用的隨機字串（建議 32 bytes 以上的隨機值）。
 ADMIN_SESSION_SECRET=
+
+# 首次管理員設定時輸入的高熵一次性初始化碼（至少 32 字元）。
+# 完成初始化後，可刪除此 Secret；未設定時 Web 初始化會拒絕執行。
+ADMIN_SETUP_TOKEN=
+
+# 2026 年新 Meta App 使用 Unified Login：非 Facebook 粉專登入。
+# 統一使用 graph.facebook.com 和 instagram_manage_* 權限。
+META_LOGIN_MODE=unified
+META_BASE_URL=https://graph.facebook.com
+META_GRAPH_API_VERSION=v27.0
+
+# Unified Login token 的 /me 是 System User，不是 IG 專業帳號 ID。
+# 請設定實際授權的 Instagram Professional Account ID。
+INSTAGRAM_ACCOUNT_ID=
