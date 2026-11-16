@@ -32,7 +32,7 @@ export async function consumeCommentEvents(
         // 明確記錄略過原因，避免 Queue 顯示 Ok 卻不知道為什麼沒有 DM。
         logger.info({ action: `automation.skipped.${outcome.reason}`, webhookEventId: msg.body.webhookEventId });
       } else if (outcome.kind === 'no_match') {
-        logger.debug({ action: 'automation.no_match', webhookEventId: msg.body.webhookEventId });
+        logger.info({ action: 'automation.no_match', webhookEventId: msg.body.webhookEventId });
       }
       if (outcome.kind === 'retry' && outcome.delaySeconds !== null) {
         msg.retry({ delaySeconds: outcome.delaySeconds });

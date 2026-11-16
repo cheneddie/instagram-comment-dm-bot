@@ -8,23 +8,20 @@
 
 為「單一管理者管理自己的 Instagram 專業帳號」而設計。不依賴第三方 SaaS、沒有按訊息計費：你自己的 Meta App、你自己的 Cloudflare 帳號、你自己的資料。
 
-## 一鍵部署
+## 正式環境部署（2026-11）
+本 Fork 目前**只維護一套正式 Cloudflare Worker**：`ig-comment-dm-bot`。
+原版「Deploy to Cloudflare」按鈕會導向上游專案，無法部署本 Fork 的安全修補，
+因此不提供該按鈕；請使用 Codespaces + `npm run deploy`。
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/pjwang2022/instagram-comment-dm-bot)
+**2026 年新建 Meta App**：優先確認「Manage messaging & content on Instagram → API setup with
+Unified login」。此流程可不連結 Facebook Page，但一般需要 Business Portfolio；
+System User Token 使用 `graph.facebook.com` 與 `instagram_manage_*` 權限。
+**不要在 Graph API Explorer 的 `graph.instagram.com` 用新 Unified App 產生 Instagram Login Token**，
+否則可能出現 `Invalid platform app`。見 [完整授權／部署步驟](docs/UNIFIED_LOGIN_GUIDE.md)。
 
-點按鈕後會依序發生：
-
-1. **複製本 repo** 到你自己的 GitHub（或 GitLab）帳號。
-2. **自動開通資源**——在你的 Cloudflare 帳號建立 D1 資料庫與 Queue（免費方案即可；Queues 自 2026 年 2 月起開放免費方案）。
-3. **提示你填入四個 secrets**（清單見 [`.dev.vars.example`](.dev.vars.example)：`INSTAGRAM_APP_SECRET`、`WEBHOOK_VERIFY_TOKEN`、`INSTAGRAM_ACCOUNT_ACCESS_TOKEN`、`ADMIN_SESSION_SECRET`）。
-4. **建置並部署**，同時設好 push 即自動重新部署：之後改你那份 repo、push 就會自動上線。
-
-首次部署完成後，到你自己的 repo 收尾：
-
-- 完成 [Meta 端設定](#2-meta-端)（webhook 訂閱＋access token）。不需要改任何設定檔——系統會用 access token 自動識別並註冊你的 Instagram 帳號。
-- 打開 `/admin`，在首次啟動設定頁[建立管理者帳號](#3-建立管理者帳號)——部署完請盡快做這步。
-
-想全程手動操作？請看下方完整的 [Quick Start](#quick-start)。
+> 舊有 Instagram Login（`graph.instagram.com`、`instagram_business_*`）為不同整合方式；
+> 若已有可用的舊 App，可手動配置該模式，禁止混用兩種權杖和 API Host。
+> 建議先取得新 Token 並完成唯讀健康檢查，再部署程式；正式 DB/Queue/Secrets 不會自動清除。
 
 ## 功能
 
@@ -62,42 +59,49 @@ Cron：每日貼文同步 · Token 到期檢查
 
 ## Quick Start
 
-### 1. Cloudflare 端
+### 1. Cloudflare（Codespaces，僅正式環境）
 
 ```bash
-git clone https://github.com/pjwang2022/instagram-comment-dm-bot.git
-cd instagram-comment-dm-bot
-npm ci && npm ci --prefix admin
+git checkout security/hardening-2026-11-14
+git pull --ff-only origin security/hardening-2026-11-14
+npm ci
+npm ci --prefix admin
+npm test && npm run lint && npm run typecheck && npm run build
 
-# 正式環境機密。每個 secret 設定後約 30 秒才生效。
-npx wrangler secret put INSTAGRAM_APP_SECRET
-npx wrangler secret put WEBHOOK_VERIFY_TOKEN        # 自訂隨機字串；步驟 2 會再用到
+npx wrangler whoami
+# 若尚未登入：npx wrangler login --device
+```
+
+**部署前先完成 [Unified Login Token 操作](docs/UNIFIED_LOGIN_GUIDE.md)**，
+並以 `npm run check-meta` 唯讀驗證；禁止以舊的 System User／Instagram Login Token 混用。
+部署腳本會先確認並綁定現有的 `ig-comment-dm-db` D1 UUID，保留舊資料。
+
+```bash
 npx wrangler secret put INSTAGRAM_ACCOUNT_ACCESS_TOKEN
-npx wrangler secret put ADMIN_SESSION_SECRET     # 32 bytes 以上隨機值
-npx wrangler secret put ADMIN_SETUP_TOKEN       # 32 字元以上隨機初始化碼，首次設定管理員時必填
-
-# 部署——首次執行會自動建立 D1 資料庫與 Queue、建置管理後台、
-# 部署 Worker 並套用 migrations。不需要命名任何資源、不需要改任何設定檔。
+npx wrangler secret put INSTAGRAM_ACCOUNT_ID
+npx wrangler secret put INSTAGRAM_APP_SECRET
+# WEBHOOK_VERIFY_TOKEN、ADMIN_SESSION_SECRET 已存在且未輪替時不必重設
 npm run deploy
 ```
 
-### 2. Meta 端
+所有機密透過終端機互動輸入，**不要直接把 Token 放進命令列參數、Git 或截圖**。
+`INSTAGRAM_APP_SECRET` 是目前要接收 Webhook 的 Meta App Secret；若你換了 App，
+必須一併核對這個值與 Meta Dashboard 的 Webhook 設定。
 
-1. 到 [Meta for Developers](https://developers.facebook.com/) 建立 App 並加入 **Instagram** 產品。
-2. 為你的專業帳號取得 access token，權限需涵蓋讀取留言、回覆留言與發送訊息（例如 `instagram_business_basic`、`instagram_business_manage_comments`、`instagram_business_manage_messages`——實際名稱以 Meta 官方文件為準），存入 `INSTAGRAM_ACCOUNT_ACCESS_TOKEN` secret。請使用**長效（long-lived）token** 並留意到期日——每日 cron 會在到期前提醒。
-3. 設定 webhook 訂閱：
-   - Callback URL：`https://<你的網域>/api/webhooks/meta/instagram`
-   - Verify token：與 `WEBHOOK_VERIFY_TOKEN` secret 相同的值
-   - 訂閱 **`comments`** 欄位；若要使用限時動態自動化，一併訂閱 **`messages`** 欄位。
-4. **把 App 切換為「發佈」（上線）狀態**——開發模式下，webhook 只會送 App 角色成員的事件，陌生人留言不會觸發。發佈需要公開的隱私政策網址，本專案內建於 `https://<你的網域>/privacy`（聯絡方式預設為通用文字，不公開管理者 Email 也不點名 IG 帳號；要提供具體聯絡管道可設定 `PRIVACY_CONTACT` 變數）。
-5. 不需要走 App 審核（App Review）／進階存取——那是服務其他人帳號才需要的流程；自用工具操作自己授權的帳號，標準存取即可。
+### 2. Meta App / Instagram
+使用 2026 年新 App 的 **Unified Login**，依照
+[docs/UNIFIED_LOGIN_GUIDE.md](docs/UNIFIED_LOGIN_GUIDE.md) 建立 Config ID／授權 IG 資產／取得
+System User Access Token。**Unified Login 不要求 FB 粉專，但通常要求 Business Portfolio。**
 
-#### 限時動態自動化的額外設定
+Webhook Callback URL：
+`https://ig-comment-dm-bot.treeseed8800.workers.dev/api/webhooks/meta/instagram`
+（若 Cloudflare 帳號或網域不同，請改用你自己的正式 Worker 網址）。
+Webhook Verify Token 必須與 Cloudflare 的 `WEBHOOK_VERIFY_TOKEN` 完全相同。
+至少訂閱 `comments`；限動功能另核對 `messages` 及 API 權限。
 
-- Webhook 訂閱必須包含 **`messages`** 欄位（系統只處理帶 `reply_to.story` 的訊息，一般 DM 一律忽略）。
-- Access token 需具備 `instagram_business_manage_messages` 權限。
-- 設定完成後務必實測：對自己的限動回覆關鍵字，確認收到自動私訊
- （Workers 正式 runtime 的限制在 `wrangler dev` 測不出來，見 CLAUDE.md）。
+驗證 Callback URL 和測試通知成功**不代表一般帳號的真實留言事件已送達**。
+需額外確認 IG 資產授權、App 存取層級、可用的帳號訂閱／事件訂閱方式。
+正式評論與私訊權限是否需要 App Review，應以目前 App 的 Meta 後台顯示為準。
 
 ### 3. 建立管理者帳號
 
@@ -163,3 +167,9 @@ npm run lint && npm run typecheck
 ### Queue 失敗隔離
 
 部署腳本會建立 `ig-comment-events-dlq`（staging 為 `ig-comment-events-staging-dlq`）。Queue Consumer 超過 3 次失敗會送到 DLQ，請於 Cloudflare 儀表板監控／手動檢查，**不要直接大量重播未核對發送狀態的事件**，避免重複公開回覆／DM。
+
+## 2026/11 部署差異
+- `wrangler.jsonc` 已移除 `env.staging`，`npm run deploy -- --env staging` 將被拒絕。
+- 新 Unified Login 預設 `META_LOGIN_MODE=unified`、`META_BASE_URL=https://graph.facebook.com`、`META_GRAPH_API_VERSION=v27.0`。
+- `INSTAGRAM_ACCOUNT_ID` 指向獲授權的 IG 專業帳號，不能使用 System User 的 `/me` ID。
+- Cloudflare 原有 Staging Worker 若仍存在，刪除設定檔不會主動刪除它，也不會刪除任何 D1 或 Queue。

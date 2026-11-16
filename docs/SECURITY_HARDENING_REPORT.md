@@ -33,3 +33,11 @@
 - Security checks 成功：[run 43608474764](https://github.com/cheneddie/instagram-comment-dm-bot/actions/runs/43608474764)（root 11 moderate/0 high；admin 0；production 0）。
 - CodeQL 工作流程成功：[run 43608474800](https://github.com/cheneddie/instagram-comment-dm-bot/actions/runs/43608474800)（成功執行不等於沒有 alerts）。
 - 部署 Staging / 真實 Meta 行為：NOT TESTED。
+
+## 2026-11-16 Unified Login 修正（分支新增，需 CI 驗證）
+- 移除 staging 配置與部署入口，僅保留正式 Worker／既有 D1／Queue；部署前回填現有 D1 UUID，拒絕錯誤 ID。
+- 新 Meta App 採 Unified Login：graph.facebook.com/v27.0／System User token；避免把 /me System User 當 IG 專業帳號。
+- Queue Consumer 與貼文同步共用一致的 API Host，明確記錄略過留言的原因。
+- 切換 Meta App／Token 時驗證 IG ID 是否仍符合 D1 既有帳號，不會自動覆蓋舊資料。
+- 舊 Instagram Login 僅供有可用舊 App 的環境明確設定；新 App 的 Invalid platform app 必須在 Meta Dashboard 修正認證配置，程式無法取代授權流程。
+- 文件與回歸測試已更新；真實的 Meta 登入、Webhook、公開回覆與 DM 仍須以使用者新 Meta App 實測。

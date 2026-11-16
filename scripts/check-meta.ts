@@ -88,7 +88,7 @@ async function main() {
     if (reason === 'token_invalid') {
       console.log('   → Token 無效或已過期（Meta error 190）。請重新產生 access token。');
     } else if (reason === 'permission_denied') {
-      console.log('   → 權限不足。請確認 App 已取得 instagram_basic 等 scope 並通過 App Review。');
+      console.log('   → 權限不足。Unified Login 請確認 instagram_basic、instagram_manage_comments、IG 資產授權與 App Access Level。');
     } else {
       console.log('   → 也可能是 API Host 不對：Instagram Login 用 graph.instagram.com，');
       console.log('      Unified Login 使用 graph.facebook.com；Instagram Login 使用 graph.instagram.com。');
